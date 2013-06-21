@@ -13,5 +13,6 @@ Usage
     	- <in_file or directory>: Nex file to run or directory  of Nex files to run
     	- <out_dir>: directory into which output files are dumped
     	If not specified output will be saved in the current working directory
-    	- <varBeta>: beta will vary from branch to branch if this is true, be constant if this is false or not specified
+    	- <varBeta>: beta will vary from branch to branch if this is true,
+        be constant if this is false or not specified
 

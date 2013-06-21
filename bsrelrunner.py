@@ -122,7 +122,7 @@ if __name__ == "__main__":
                 "\tIf not specified output will be saved in" \
                 " the current working directory\n" \
                 "\t- <varBeta>: beta will vary from branch to branch if" \
-                " this is true, be constant if this is false or not" \
+                " this is true,\nbe constant if this is false or not" \
                 " specified\n",
                 file=sys.stderr)
         exit(1)

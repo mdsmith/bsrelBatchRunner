@@ -1,8 +1,12 @@
 #! /usr/bin/env python
 
 import os, sys, subprocess, time
-node_list = range(13,31)
-local_processes = {}
+from subprocess import call
+from threading import Thread
+from queue import Queue, Empty
+#node_list = range(13,31)
+#local_processes = {}
+jobs = Queue()
 
 def get_files(in_file):
     if os.path.isfile(in_file) == True:
@@ -24,14 +28,11 @@ def get_out_dir(out_dir):
 
 
 # XXX out_file is more of an out suffix... Fix that
-def run_BSREL(  file_name,
+def run_BSREL(  node,
+                file_name,
                 file_name_body,
                 out_dir, #nodeI,
-                var_beta, #rep,
-                nodeI,
-                node_processes = local_processes,
-                nodes = node_list):
-    #file_name_body = file_name[:-4]
+                var_beta):
     batchfile = open(   out_dir
                         + os.sep
                         + file_name_body
@@ -60,7 +61,7 @@ def run_BSREL(  file_name,
                     ', inputRedirect);')
     batchfile.close()
     call_list = [   'bpsh',
-                    str(nodes[nodeI]),
+                    str(node),
                     'HYPHYMP',
                     out_dir + os.sep
                             + file_name_body
@@ -69,35 +70,54 @@ def run_BSREL(  file_name,
                         + os.sep
                         + file_name_body
                         + ".out.stdout", 'w')
-    node_processes[str(nodeI)] = subprocess.Popen( call_list,
-                                                    stdout=output_file)
+    print(call_list)
+    call(call_list, stdout=output_file)
     time.sleep(1)
+
+def run_job(node):
+    while True:
+        try:
+            bsrel_args = jobs.get(block=False)
+            run_BSREL(node, bsrel_args)
+            jobs.task_done()
+        except Empty:
+            break
+
+def nodes(num):
+    import shlex
+    from subprocess import Popen, PIPE
+    cmd = shlex.split('''beomap --all-nodes --no-local --exclude
+    0:1:2:3:4:5:6''')
+    proc = Popen(cmd, stdout=PIPE)
+    stdout, _ = proc.communicate()
+    node_list = [int(node) for node in
+                stdout.decode('utf-8').strip().split(':')]
+    node_list.reverse()
+    node_list = node_list[:num]
+    return node_list
+
+def run_job(node):
+    while True:
+        try:
+            bsrel_args = jobs.get(block=False)
+            run_BSREL(node, *bsrel_args)
+            jobs.task_done()
+        except Empty:
+            break
+
 
 def run_all_BSREL(  in_file,
                     out_dir,
-                    var_beta,
-                    node_processes = local_processes,
-                    nodes = node_list):
+                    var_beta):
     nex_file_list = get_files(in_file)
     out_dir = get_out_dir(out_dir)
-    files_done = 0
-    while files_done < len(nex_file_list):
-        for sub_file_num in range( min(len(nex_file_list) - files_done,
-                                    len(nodes))):
-            this_file_num = files_done + sub_file_num
-            file_name = nex_file_list[this_file_num]
-            in_path, file_name_body = os.path.split(file_name)
-            #file_name_body = file_name_body[:-4]
-            run_BSREL(  file_name,
+    for file_name in nex_file_list:
+        in_path, file_name_body = os.path.split(file_name)
+        bsrel_args = (  file_name,
                         file_name_body,
                         out_dir,
-                        var_beta,
-                        sub_file_num,
-                        node_processes,
-                        nodes)
-        for sub_p in node_processes.values():
-            sub_p.wait()
-        files_done += min(len(nex_file_list) - files_done, len(nodes))
+                        var_beta)
+        jobs.put(bsrel_args)
 
 if __name__ == "__main__":
     var_beta = False
@@ -129,3 +149,8 @@ if __name__ == "__main__":
     run_all_BSREL(  in_file,
                     out_dir,
                     var_beta)
+    for node in nodes(24):
+        t = Thread(target=run_job, args=(node,))
+        t.daemon = True
+        t.start()
+    jobs.join()

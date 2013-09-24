@@ -4,20 +4,27 @@ import os, sys, subprocess, time
 from subprocess import call
 from threading import Thread
 from queue import Queue, Empty
+import argparse
+import glob
+import re
 #node_list = range(13,31)
 #local_processes = {}
 jobs = Queue()
 
-def get_files(in_file):
-    if os.path.isfile(in_file) == True:
-        return [in_file]
-    file_list = []
-    for path, dirs, files in os.walk(in_file):
-        temp_files = [os.path.join(in_file,f) for f in files if f.upper().find("NEX") != -1]
-        temp_files = [t for t in temp_files
-                        if t.upper().endswith("NEX")
-                        or t.upper()[-1].isdigit()]
-        file_list = file_list + temp_files
+def get_files(in_dir, out_dir):
+    finished_file_list = []
+    if out_dir != "":
+        finished_file_list = glob.glob(out_dir + os.sep + "*.nex.out.fit")
+    if os.path.isdir(in_dir):
+        file_list = glob.glob(in_dir + os.sep + "*.nex")
+    else:
+        file_list = [in_dir]
+    for fin_file in finished_file_list:
+        for todo_file in file_list:
+            todo_file_file = os.path.basename(todo_file)
+            fin_file_file = os.path.basename(fin_file)
+            if todo_file_file in fin_file_file:
+                file_list.remove(todo_file)
     return file_list
 
 def get_out_dir(out_dir):
@@ -108,8 +115,12 @@ def run_job(node):
 
 def run_all_BSREL(  in_file,
                     out_dir,
-                    var_beta):
-    nex_file_list = get_files(in_file)
+                    var_beta,
+                    finish):
+    if finish:
+        nex_file_list = get_files(in_file, out_dir)
+    else:
+        nex_file_list = get_files(in_file, "")
     out_dir = get_out_dir(out_dir)
     for file_name in nex_file_list:
         in_path, file_name_body = os.path.split(file_name)
@@ -120,35 +131,19 @@ def run_all_BSREL(  in_file,
         jobs.put(bsrel_args)
 
 if __name__ == "__main__":
-    var_beta = False
-    if len(sys.argv) == 2:
-        in_file = sys.argv[1]
-        out_dir = ""
-    elif len(sys.argv) == 3:
-        in_file, out_dir = sys.argv[1:3]
-    elif len(sys.argv) == 4:
-        in_file, out_dir, var_beta = sys.argv[1:4]
-        if var_beta.upper() == "TRUE":
-            var_beta = True
-        else:
-            var_beta = False
-    else:
-        print(  "Valid usage:\n" \
-                "\t- bsrelrun <in_file or directory> [<out_dir>] [<var_beta>]\n" \
-                "Where:\n" \
-                "\t- <in_file or directory>: Nex file to run or directory " \
-                " of Nex files to run\n" \
-                "\t- <out_dir>: directory into which output files are dumped\n" \
-                "\tIf not specified output will be saved in" \
-                " the current working directory\n" \
-                "\t- <varBeta>: beta will vary from branch to branch if" \
-                " this is true,\nbe constant if this is false or not" \
-                " specified\n",
-                file=sys.stderr)
-        exit(1)
-    run_all_BSREL(  in_file,
-                    out_dir,
-                    var_beta)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("input", help="input file or directory")
+    parser.add_argument("output", help="output directory")
+    parser.add_argument("--alphas",
+                        help="let alphas vary on a per beta basis",
+                        action="store_true")
+    parser.add_argument("--finish",
+                        help="skip already analyzed files",
+                        action="store_true")
+    args = parser.parse_args()
+
+    run_all_BSREL(args.input, args.output, args.alphas, args.finish)
+
     for node in nodes(24):
         t = Thread(target=run_job, args=(node,))
         t.daemon = True

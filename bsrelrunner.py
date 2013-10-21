@@ -11,12 +11,12 @@ import re
 #local_processes = {}
 jobs = Queue()
 
-def get_files(in_dir, out_dir):
+def get_files(in_dir, out_dir, suffix):
     finished_file_list = []
     if out_dir != "":
-        finished_file_list = glob.glob(out_dir + os.sep + "*.nex.out.fit")
+        finished_file_list = glob.glob(out_dir + os.sep + "*" + suffix + ".out.fit")
     if os.path.isdir(in_dir):
-        file_list = glob.glob(in_dir + os.sep + "*.nex")
+        file_list = glob.glob(in_dir + os.sep + "*" + suffix)
     else:
         file_list = [in_dir]
     for fin_file in finished_file_list:
@@ -39,7 +39,8 @@ def run_BSREL(  node,
                 file_name,
                 file_name_body,
                 out_dir, #nodeI,
-                var_beta):
+                var_beta,
+                tree):
     batchfile = open(   out_dir
                         + os.sep
                         + file_name_body
@@ -54,7 +55,10 @@ def run_BSREL(  node,
     batchfile.write('inputRedirect["02"]="'
                     + os.path.abspath(file_name)
                     + '";\n')
-    batchfile.write('inputRedirect["03"]= "Y";\n')
+    if tree == "None":
+        batchfile.write('inputRedirect["03"]= "Y";\n')
+    else:
+        batchfile.write('inputRedirect["03"]= "' + tree + '";\n')
     batchfile.write('inputRedirect["04"]= "All";\n')
     batchfile.write('inputRedirect["05"]= "";\n')
     batchfile.write('inputRedirect["06"]="'
@@ -116,18 +120,21 @@ def run_job(node):
 def run_all_BSREL(  in_file,
                     out_dir,
                     var_beta,
-                    finish):
+                    finish,
+                    tree,
+                    suffix):
     if finish:
-        nex_file_list = get_files(in_file, out_dir)
+        nex_file_list = get_files(in_file, out_dir, suffix)
     else:
-        nex_file_list = get_files(in_file, "")
+        nex_file_list = get_files(in_file, "", suffix)
     out_dir = get_out_dir(out_dir)
     for file_name in nex_file_list:
         in_path, file_name_body = os.path.split(file_name)
         bsrel_args = (  file_name,
                         file_name_body,
                         out_dir,
-                        var_beta)
+                        var_beta,
+                        tree)
         jobs.put(bsrel_args)
 
 if __name__ == "__main__":
@@ -140,9 +147,20 @@ if __name__ == "__main__":
     parser.add_argument("--finish",
                         help="skip already analyzed files",
                         action="store_true")
+    parser.add_argument("--tree",
+                        help="specify a tree file for all input files",
+                        default="None")
+    parser.add_argument("--suffix",
+                        help="specify a suffix (e.g. .nex, .fasta)",
+                        default=".nex")
     args = parser.parse_args()
 
-    run_all_BSREL(args.input, args.output, args.alphas, args.finish)
+    run_all_BSREL(  args.input,
+                    args.output,
+                    args.alphas,
+                    args.finish,
+                    args.tree,
+                    args.suffix)
 
     for node in nodes(24):
         t = Thread(target=run_job, args=(node,))

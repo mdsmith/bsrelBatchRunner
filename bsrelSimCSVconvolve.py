@@ -35,6 +35,16 @@ def max_column(column, ignore_rows=0, leave_rows=0):
     col_max = max(column[ignore_rows:])
     return padding + [col_max]
 
+def sum_column(column, ignore_rows=0, leave_rows=0):
+    padding = leave_rows * [0]
+    col_max = sum(column[ignore_rows:])
+    return padding + [col_max]
+
+def min_column(column, ignore_rows=0, leave_rows=0):
+    padding = leave_rows * [0]
+    col_max = min(column[ignore_rows:])
+    return padding + [col_max]
+
 def append_BSREL3(buffer, filename, whole_tree):
     contents = recover_csv(filename)
     #print("buffer subset:")
@@ -67,6 +77,7 @@ def append_BSREL3(buffer, filename, whole_tree):
                                 if max([float(o) for o in omegas]) > 1
                                 else 0
                                 for omegas in omegas_column[1:]]
+    orig_omega_over_one_column = omega_over_one_column
     if whole_tree:
         omega_over_one_column = max_column(omega_over_one_column)
     omega_over_one_column.insert(0, "BSREL3_OmegaOver1")
@@ -78,10 +89,13 @@ def append_BSREL3(buffer, filename, whole_tree):
                             for omegas, props in zip(omegas_column[1:],
                             props_column[1:])]
     if whole_tree:
-        prop_over_one_column = 
+        prop_over_one_column =  prop_over_one_column[
+                                    orig_omega_over_one_column.index(
+                                        omega_over_one_column[-1])]
     prop_over_one_column.insert(0, "BSREL3_propOverOne")
     #print(prop_over_one_column)
 
+    # XXX whole_tree for the rest of this and append_MG94
     max_omega_column = [omegas[-1]
                         for omegas in omegas_column[1:]];
     max_omega_column.insert(0, "BSREL3_MaxOmega")
@@ -128,11 +142,68 @@ def append_MG94(buffer, filename, whole_tree):
     #print(buffer)
     return buffer
 
-def append_csv(buffer, filename, whole_tree):
+def get_columns(rows):
+    columns = [[]] * len(rows[0].split(','))
+    for row in rows:
+        for j,value in enumerate(row.split(',')):
+            columns[j].append(value)
+    return columns
+
+# Take list of strings (lines), return same
+def flatten_csv(filename, contents):
+    # the filename replaces the branch name as the first item in the list
+    flat_contents = [filename]
+    columns = get_columns(contents)
+    max_omega_over_one_index = -1
+    for column in columns:
+        # The first column is the branchname, which isn't useful
+        if column[0] == "Branch":
+            continue
+        elif column[0] == "RateClasses":
+            flat_contents.append(max_column(column))
+        elif column[0] == "OmegaOver1":
+            flat_contents.append(max_column(column))
+            max_omega_over_one_index = column.index(max_column(column))
+        elif column[0] == "WtOmegaOver1":
+            if max_omega_over_one_index != -1:
+                flat_contents.append(column[max_omega_over_one_index])
+            else:
+                flat_contents.append(0)
+        elif column[0] == "LRT":
+            flat_contents.append(min_column(column))
+        elif column[0] == "p":
+            flat_contents.append(min_column(column))
+        elif column[0] == "p_Holm":
+            flat_contents.append(min_column(column))
+        elif column[0] == "BranchLength":
+            flat_contents.append(sum_column(column))
+        else:
+            flat_contents.append(mean_column(column))
+    return [','.join(flat_contents)]
+
+def analyze_csv_sig_branches(contents):
+    sig_branches = []
+    for line in contents:
+        # XXX debug
+        #print(line.split(',')[-2])
+        if float(line.split(',')[-2]) < 0.05:
+            sig_branches.append(line.split(',')[0])
+    return sig_branches
+
+def append_csv( buffer,
+                filename,
+                whole_tree):
     file = open(filename, 'r')
     contents = file.readlines()
-    buffer += contents
-    return buffer
+    to_add = contents
+    # There is a header, doesn't need to be analyzed
+    sig_list = analyze_csv_sig_branches(contents[1:])
+    if whole_tree:
+        # The header ought not be flattened, but it is useful for guiding the
+        # flattening
+        to_add = flatten_csv(filename, contents)
+    buffer += to_add
+    return sig_list
 
 def append_column(buffer, column):
     # strip newlines, add comma, replace newlines
@@ -143,6 +214,8 @@ def append_column(buffer, column):
 def concat_buffers(buffer1, buffer2):
     if len(buffer1) != 0:
         buffer2 = buffer2[1:]
+        if buffer1[-1].split(',')[-1] != '\n':
+            buffer1[-1] += '\n'
     return buffer1 + buffer2
 
 def rep_to_column(rep, key, order):
@@ -174,28 +247,48 @@ def write_buffer(buffer, filename):
     return 0
 
 # prefixes are a list of filenames that start sets "longPy.279" etc.
-def run_batch(buffer, prefixes, whole_tree):
+def run_batch(  buffer,
+                prefixes,
+                whole_tree):
     # for fileset in prefixes
+    sig_branch_dict = {}
+    sig_tree_count = 0
     for prefix in prefixes:
         buffer2 = []
         #csv_filename = prefix + ".sim.0.recovered"
         csv_filename = prefix
-        settings_filename = prefix
-        append_csv(buffer2, csv_filename, whole_tree)
-        #append_settings(buffer2, settings_filename)
-        append_BSREL3(buffer2, settings_filename + ".BSREL", whole_tree)
-        try:
-            append_MG94(buffer2, settings_filename + ".mglocal.csv",
-            whole_tree)
-        except KeyError:
-            print(settings_filename)
+        this_sig_branches = append_csv( buffer2,
+                                        csv_filename,
+                                        whole_tree)
+        # XXX debug
+        #print("Sigs for this branch:")
+        #print(this_sig_branches)
+        # Accounting:
+        if len(this_sig_branches) > 0:
+            sig_tree_count += 1
+        for branch in this_sig_branches:
+            if branch not in sig_branch_dict:
+                sig_branch_dict[branch] = 1
+            else:
+                sig_branch_dict[branch] += 1
+
+        # Append others if available:
+#        try:
+#            append_BSREL3(buffer2, csv_filename + ".BSREL", whole_tree)
+#        except FileNotFoundError:
+#            continue
+#        try:
+#            append_MG94(buffer2, csv_filename + ".mglocal.csv",
+#            whole_tree)
+#        except FileNotFoundError:
+#            continue
         buffer = concat_buffers(buffer, buffer2)
-    return buffer
+    return buffer, sig_branch_dict, sig_tree_count
 
 def get_prefixes(sim_dir):
     import glob
     import re
-    file_list = glob.glob(sim_dir + os.sep + "*.nex.out")
+    file_list = glob.glob(sim_dir + os.sep + "*.out")
     #file_list = [a for a in file_list if re.search("^\w+\/\w+\.\d+$", a) != None]
     return file_list
 
@@ -208,6 +301,15 @@ if __name__ == "__main__":
                         help="treat the tree as a single unit, rather than \
                         the branches independently",
                         action='store_true')
+    parser.add_argument("--stats",
+                        dest="print_stats",
+                        help="print the number of branches found to be \
+                        under significant positive selection, the number of \
+                        trees found to contain at least one branch under \
+                        significant positive selection and a list of all \
+                        branches and hit count for each branch found to be \
+                        under significant positive selection",
+                        action='store_true')
     args = parser.parse_args()
 
     buffer = []
@@ -215,34 +317,17 @@ if __name__ == "__main__":
     sim_dir = args.input
     output_filename = args.output
     prefixes = get_prefixes(sim_dir)
-    buffer = run_batch(buffer, prefixes, args.whole_tree)
+    if len(prefixes) == 0:
+        print("Error: no valid files found")
+        exit(1)
+    buffer, sig_branches_dict, sig_tree_count = run_batch( buffer,
+                                                            prefixes,
+                                                            args.whole_tree)
+    if args.print_stats:
+        print(  len(prefixes), " total trees")
+        print(  str(sum(sig_branches_dict.values())),
+                " significant branches found")
+        print(str(sig_tree_count), " significant trees found")
+        print("branches and hit number:")
+        print(sig_branches_dict)
     write_buffer(buffer, output_filename)
-
-#    if len(sys.argv) == 4 and sys.argv[1] == "-d":
-#        # Do dir stuff
-#        sim_dir = sys.argv[2]
-#        output_filename = sys.argv[3]
-#        buffer = []
-#        #prefixes = [os.path.join(sim_dir, "longPy." + str(number)) for number in
-#        #range(0,10000)]
-#        prefixes = get_prefixes(sim_dir)
-#        buffer = run_batch(buffer, prefixes)
-#        write_buffer(buffer, output_filename)
-#    elif len(sys.argv) == 4:
-#        csv_filename = sys.argv[1]
-#        settings_filename = sys.argv[2]
-#        output_filename = sys.argv[3]
-#
-#        buffer = []
-#        append_csv(buffer, csv_filename)
-#        # append_settings(buffer, settings_filename)
-#        # append_settings(buffer, settings_filename)
-#        # append_simulated(buffer, settings_filename)
-#        # append_fit(buffer, settings_filename)
-#        write_buffer(buffer, output_filename)
-#    else:
-#        print(  "Valid usage:\n\t- bsrelSimCSVconvolve.py csv_filename " \
-#                "settings_filename output_filename\n" \
-#                "\t- Or bsrelSimCSVconvolve.py -d in_dir out_file\n",
-#                file = sys.stderr)
-#        exit(1)

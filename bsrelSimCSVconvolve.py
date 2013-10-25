@@ -95,14 +95,20 @@ def append_BSREL3(buffer, filename, whole_tree):
     prop_over_one_column.insert(0, "BSREL3_propOverOne")
     #print(prop_over_one_column)
 
-    # XXX whole_tree for the rest of this and append_MG94
     max_omega_column = [omegas[-1]
                         for omegas in omegas_column[1:]];
+    orig_max_omega_column = max_omega_column
+    if whole_tree:
+        max_omega_column = max_column(max_omega_column)
     max_omega_column.insert(0, "BSREL3_MaxOmega")
     #print(max_omega_column)
 
     max_prop_column = [props[-1]
                         for props in props_column[1:]];
+    if whole_tree:
+        max_omega_colum =   max_prop_column[
+                                orig_max_omega_column.index(
+                                    max_omega_column[-1])]
     max_prop_column.insert(0, "BSREL3_MaxOmegaProp")
     #print(max_prop_column)
 
@@ -143,7 +149,9 @@ def append_MG94(buffer, filename, whole_tree):
     return buffer
 
 def get_columns(rows):
-    columns = [[]] * len(rows[0].split(','))
+    columns = []
+    for column in rows[0].split(','):
+        columns.append([])
     for row in rows:
         for j,value in enumerate(row.split(',')):
             columns[j].append(value)
@@ -151,35 +159,42 @@ def get_columns(rows):
 
 # Take list of strings (lines), return same
 def flatten_csv(filename, contents):
+    header = contents[0]
     # the filename replaces the branch name as the first item in the list
     flat_contents = [filename]
     columns = get_columns(contents)
     max_omega_over_one_index = -1
+    if len(columns[0]) <= 1:
+        print("empty csv: ", filename)
+        return
     for column in columns:
         # The first column is the branchname, which isn't useful
         if column[0] == "Branch":
             continue
-        elif column[0] == "RateClasses":
-            flat_contents.append(max_column(column))
-        elif column[0] == "OmegaOver1":
-            flat_contents.append(max_column(column))
-            max_omega_over_one_index = column.index(max_column(column))
-        elif column[0] == "WtOmegaOver1":
-            if max_omega_over_one_index != -1:
-                flat_contents.append(column[max_omega_over_one_index])
-            else:
-                flat_contents.append(0)
-        elif column[0] == "LRT":
-            flat_contents.append(min_column(column))
-        elif column[0] == "p":
-            flat_contents.append(min_column(column))
-        elif column[0] == "p_Holm":
-            flat_contents.append(min_column(column))
-        elif column[0] == "BranchLength":
-            flat_contents.append(sum_column(column))
         else:
-            flat_contents.append(mean_column(column))
-    return [','.join(flat_contents)]
+            column_data = [float(a) for a in column[1:]]
+            if column[0] == "RateClasses":
+                flat_contents.append(max_column(column_data)[0])
+            elif column[0] == "OmegaOver1":
+                flat_contents.append(max_column(column_data)[0])
+                max_omega_over_one_index =  column_data.index(max_column(
+                                                column_data)[0])
+            elif column[0] == "WtOmegaOver1":
+                if max_omega_over_one_index != -1:
+                    flat_contents.append(float(column_data[max_omega_over_one_index]))
+                else:
+                    flat_contents.append(0)
+            elif column[0] == "LRT":
+                flat_contents.append(min_column(column_data)[0])
+            elif column[0] == "p":
+                flat_contents.append(min_column(column_data)[0])
+            elif column[0] == "p_Holm":
+                flat_contents.append(min_column(column_data)[0])
+            elif column[0].strip('\n') == "BranchLength":
+                flat_contents.append(sum_column(column_data)[0])
+            else:
+                flat_contents.append(mean_column(column_data)[0])
+    return [header, ','.join([str(a) for a in flat_contents])]
 
 def analyze_csv_sig_branches(contents):
     sig_branches = []
@@ -195,15 +210,19 @@ def append_csv( buffer,
                 whole_tree):
     file = open(filename, 'r')
     contents = file.readlines()
-    to_add = contents
-    # There is a header, doesn't need to be analyzed
-    sig_list = analyze_csv_sig_branches(contents[1:])
-    if whole_tree:
-        # The header ought not be flattened, but it is useful for guiding the
-        # flattening
-        to_add = flatten_csv(filename, contents)
-    buffer += to_add
-    return sig_list
+    if len(contents) != 0:
+        to_add = contents
+        # There is a header, doesn't need to be analyzed
+        sig_list = analyze_csv_sig_branches(contents[1:])
+        if whole_tree:
+            # The header ought not be flattened, but it is useful for guiding the
+            # flattening
+            to_add = flatten_csv(filename, contents)
+        if to_add != None and to_add != []:
+            buffer += to_add
+        return sig_list
+    else:
+        return []
 
 def append_column(buffer, column):
     # strip newlines, add comma, replace newlines
@@ -213,8 +232,9 @@ def append_column(buffer, column):
 
 def concat_buffers(buffer1, buffer2):
     if len(buffer1) != 0:
-        buffer2 = buffer2[1:]
-        if buffer1[-1].split(',')[-1] != '\n':
+        if len(buffer2) != 1:
+            buffer2 = buffer2[1:]
+        if buffer1[-1].split(',')[-2:] != '\n':
             buffer1[-1] += '\n'
     return buffer1 + buffer2
 
@@ -324,10 +344,10 @@ if __name__ == "__main__":
                                                             prefixes,
                                                             args.whole_tree)
     if args.print_stats:
-        print(  len(prefixes), " total trees")
+        print(len(prefixes), " total trees")
         print(  str(sum(sig_branches_dict.values())),
                 " significant branches found")
         print(str(sig_tree_count), " significant trees found")
-        print("branches and hit number:")
+        print("branches and hit count:")
         print(sig_branches_dict)
     write_buffer(buffer, output_filename)
